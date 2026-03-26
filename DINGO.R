@@ -1,5 +1,6 @@
 #Input format:
 #Tab-separated .gz file with: CHR	SNP BP	A1	A2	FREQ	BETA	SE	P   N
+#Example: Rscript ptag.R fetal_gwas.gz maternal_gwas.gz 0.13 my_meta_analysis.txt
 
 library(data.table)
 library(lubridate)
@@ -14,6 +15,14 @@ message(date(),": Reading GWAS files")
 
 fetal <- fread(fetal_file, header=T) 
 maternal <- fread(maternal_file, header=T) 
+
+if(!"N" %in% colnames(fetal)) {
+  fetal$N <- args[5]
+}
+
+if(!"N" %in% colnames(maternal)) {
+  maternal$N <- args[6]
+}
 
 fetal$A1 <- toupper(fetal$A1)
 fetal$A2 <- toupper(fetal$A2)
@@ -30,6 +39,7 @@ setkey(fetal, "SNP")
 setkey(maternal, "SNP")
 data<-fetal[maternal]
 data<-data[complete.cases(data), ]
+
 
 message(date(),": Merged GWAS files")
 message(date(),": Number of SNPs: ", nrow(data))
@@ -66,10 +76,6 @@ data$Beta_maternal <- data$Beta_maternal_new
 data$ea_maternal <- data$ea_maternal_new
 data$nea_maternal <- data$nea_maternal_new
 data$eaf_maternal <- data$eaf_maternal_new
-
-#Identify SNPs with standard errors = 0. SE is used as denominator in DINGO anlysis ana cannot be 0.
-data <- subset(data, SE_fetal !=0 & SE_maternal !=0)
-message(date(),": Number of SNPs after removing SNPs with SE=0 from maternal and fetal: ", nrow(data))
 
 message(date(),": Cleaned GWAS files")
 
@@ -116,7 +122,77 @@ data$chi_2df <- chisq_2df
 data$pval_2df <- pval_2df
 data$pval_best_1df <- ifelse(data$p_fetal < data$p_maternal, data$p_fetal, data$p_maternal)
 
+#Perform 1df meta-analysis
+#NB Insert intercept from LD score regression
 
+message(date(), ": Computing 1df fetal meta-analysis pvalue for all SNPs")
+
+#Perform meta-analysis of fetal effect
+data$b_f1 <- data$Beta_fetal
+data$b_f2 <- 2*data$Beta_maternal #The estimate of the fetal effect estimated from the maternal meta-analysis is two times bm
+data$var_bm <- data$SE_maternal^2
+
+#The variance of the fetal effect estimated from the maternal meta-analysis is four times the variance of bm
+data$var_b_f2 <- 4*data$var_bm
+data$var_b_f1 <- data$SE_fetal^2
+
+data$w1 <- data$var_b_f1
+data$w2 <- data$var_b_f2
+
+#Perform inverse variance weighted meta-analysis of fetal effect estimates
+data$beta_meta_fetal <- (data$b_f1/data$w1 + data$b_f2/data$w2)/(1/data$w1 + 1/data$w2)
+
+data$cov_b_f1_b_f2 <- int*sqrt(data$var_b_f1)*sqrt(data$var_b_f2)
+
+#Calculate variance of beta_meta
+data$var_beta_meta_fetal <- 1/((1/data$w1)+(1/data$w2)) + 2*data$cov_b_f1_b_f2*((1/data$w1)/(1/data$w1+1/data$w2))*((1/data$w2)/(1/data$w1+1/data$w2))
+
+data$chisq_fetal <- (data$beta_meta_fetal)^2/data$var_beta_meta_fetal
+
+data$p_meta_fetal <- pchisq(data$chisq_fetal, df = 1, ncp = 0, lower.tail = FALSE, log.p = FALSE)
+
+message(date(), ": Computing 1df maternal meta-analysis pvalue for all SNPs")
+
+#Perform meta-analysis of maternal effect
+data$b_m1 <- data$Beta_maternal
+data$b_m2 <- 2*data$Beta_fetal #The estimate of the maternal effect estimated from the fetal meta-analysis is two times bf
+data$var_bf <- data$SE_fetal^2
+
+#The variance of the maternal effect estimated from the fetal meta-analysis is four times the variance of bf
+data$var_b_m2 <- 4*data$var_bf
+data$var_b_m1 <- data$SE_maternal^2
+
+data$w1 <- data$var_b_m1
+data$w2 <- data$var_b_m2
+
+#Perform inverse variance weighted meta-analysis of maternal effect estimates
+data$beta_meta_maternal <- (data$b_m1/data$w1 + data$b_m2/data$w2)/(1/data$w1 + 1/data$w2)
+
+data$cov_b_m1_b_m2 <- int*sqrt(data$var_b_m1)*sqrt(data$var_b_m2)
+
+#Calculate variance of beta_meta
+data$var_beta_meta_maternal <- 1/((1/data$w1)+(1/data$w2)) + 2*data$cov_b_f1_b_f2*((1/data$w1)/(1/data$w1+1/data$w2))*((1/data$w2)/(1/data$w1+1/data$w2))
+
+
+data$chisq_maternal <- (data$beta_meta_maternal)^2/data$var_beta_meta_maternal
+
+data$p_meta_maternal <- pchisq(data$chisq_maternal, df = 1, ncp = 0, lower.tail = FALSE, log.p = FALSE)
+
+#Select variables to be reported
+data <- data[,c("CHR",	"SNP",	"BP",	"ea_fetal",	"nea_fetal",	"eaf_fetal", "eaf_maternal_new",
+               "Beta_fetal",	"SE_fetal",	"p_fetal",	"n_fetal", 
+               "Beta_maternal_new","SE_maternal",	"p_maternal",	"n_maternal",	
+               "fetal_beta_adjusted",	"fetal_se_adjusted", "pval_fetal_adj",
+               "maternal_beta_adjusted","maternal_se_adjusted", "pval_maternal_adj",
+               "pval_2df", "p_meta_fetal",	"p_meta_maternal")]
+
+#Rename variables
+names(data) <- c("CHR",	"SNP",	"BP",	"EA",	"NEA",	"EAF_F", "EAF_M",
+                 "BETA_F",	"SE_F",	"P_F",	"N_F", 
+                 "BETA_M","SE_M",	"P_M",	"N_M",	
+                 "BETA_F_ADJ",	"SE_F_ADJ", "P_F_ADJ",
+                 "BETA_M_ADJ","SE_M_ADJ", "P_M_ADJ",
+                 "P_2DF", "P_F_META",	"P_M_META")
 
 fwrite(data, file=args[4], quote=F, col.names=T, sep="\t", row.names=F)
 
