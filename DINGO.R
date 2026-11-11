@@ -60,7 +60,7 @@ message(date(),": Number of SNPs after removing non matching alleles: ", nrow(da
 data$palindromic <- ifelse(data$ea_maternal_new=="A" & data$nea_maternal_new =="T",1,
                            ifelse(data$ea_maternal_new=="T" & data$nea_maternal_new =="A",1,
                                   ifelse(data$ea_maternal_new=="C" & data$nea_maternal_new =="G",1,
-                                         ifelse(data$ea_maternal_new=="G" & data$nea_maternal_new =="G",1,0)))) 
+                                         ifelse(data$ea_maternal_new=="G" & data$nea_maternal_new =="C",1,0)))) 
 
 #Identify the palindromic SNPs + maternal and fetal SNPs have different minor allele; 
 data$palindromic2 <- ifelse(data$palindromic==1 & data$eaf_maternal_new > 0.5 & data$eaf_fetal < 0.5, 1,
@@ -171,7 +171,7 @@ data$beta_meta_maternal <- (data$b_m1/data$w1 + data$b_m2/data$w2)/(1/data$w1 + 
 data$cov_b_m1_b_m2 <- int*sqrt(data$var_b_m1)*sqrt(data$var_b_m2)
 
 #Calculate variance of beta_meta
-data$var_beta_meta_maternal <- 1/((1/data$w1)+(1/data$w2)) + 2*data$cov_b_f1_b_f2*((1/data$w1)/(1/data$w1+1/data$w2))*((1/data$w2)/(1/data$w1+1/data$w2))
+data$var_beta_meta_maternal <- 1/((1/data$w1)+(1/data$w2)) + 2*data$cov_b_m1_b_m2*((1/data$w1)/(1/data$w1+1/data$w2))*((1/data$w2)/(1/data$w1+1/data$w2))
 
 
 data$chisq_maternal <- (data$beta_meta_maternal)^2/data$var_beta_meta_maternal
